@@ -1,6 +1,6 @@
 # NetSentinel — AI Network Intrusion Detection & Automated Response
 
-[![CI](https://github.com/NixonWahome/netsentinel/actions/workflows/ci.yml/badge.svg)](../../actions)
+[![CI](https://github.com/NixonWahome/Oppenheimermode-/actions/workflows/ci.yml/badge.svg)](https://github.com/NixonWahome/Oppenheimermode-/actions)
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
@@ -38,32 +38,41 @@ inference time — no train/serve skew.
 
 ## Results
 
-Trained on `KDDTrain+` and evaluated on the held-out `KDDTest+` split.
-Metrics and plots are regenerated on every training run into `artifacts/`.
+Trained on `KDDTrain+` (125,973 flows) and evaluated on the held-out
+`KDDTest+` split (22,544 flows). Metrics and plots are regenerated on every
+training run into `artifacts/`.
 
 | Metric | Score |
 |--------|-------|
-| Precision | _populated after training_ |
-| Recall | _populated after training_ |
-| F1 | _populated after training_ |
-| ROC-AUC | _populated after training_ |
+| ROC-AUC | **0.962** |
+| Precision | **0.967** |
+| Recall | 0.608 |
+| F1 | 0.746 |
+| Accuracy | 0.765 |
 
 <p>
-  <img src="artifacts/confusion_matrix.png" width="320">
-  <img src="artifacts/roc_curve.png" width="320">
-  <img src="artifacts/feature_importances.png" width="320">
+  <img src="docs/confusion_matrix.png" width="320">
+  <img src="docs/roc_curve.png" width="320">
+  <img src="docs/feature_importances.png" width="320">
 </p>
 
 > Accuracy is intentionally **not** the headline metric: benign traffic
 > dominates intrusion datasets, so precision/recall/F1 and ROC-AUC tell the
 > real story. The class imbalance is handled with `class_weight="balanced"`.
+>
+> **On the recall figure:** the `KDDTest+` split deliberately contains attack
+> types that never appear in training, which is exactly why NSL-KDD is a hard,
+> honest benchmark. The high precision (0.97) means almost everything we block
+> is a real attack — a deliberate trade-off for an automated-response tool,
+> where false positives block legitimate users. ROC-AUC of 0.96 shows the model
+> ranks threats well across thresholds.
 
 ## Quickstart
 
 ```bash
-# 1. Install
+# 1. Install (editable, so the `netsentinel` package is importable)
 python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
+pip install -e .
 
 # 2. Get the dataset (NSL-KDD, ~6 MB)
 python scripts/download_data.py
