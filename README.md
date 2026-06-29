@@ -1,8 +1,11 @@
-# NetSentinel — AI Network Intrusion Detection & Automated Response
+# Oppenheimer — AI Network Intrusion Detection & Automated Response
 
 [![CI](https://github.com/NixonWahome/Oppenheimermode-/actions/workflows/ci.yml/badge.svg)](https://github.com/NixonWahome/Oppenheimermode-/actions)
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
+
+> Named after the film *Oppenheimer* — a system built to detect a threat the
+> moment it appears and decide, in real time, whether to act on it.
 
 A SOC-oriented intrusion detection system that learns to distinguish malicious
 network flows from benign traffic, then **automatically responds** to threats by
