@@ -22,18 +22,23 @@ benchmark dataset with a reproducible, tested ML pipeline.
 ## Architecture
 
 ```
-                 ┌──────────────┐     ┌──────────────────┐     ┌───────────────┐
- NSL-KDD flows ─▶│ Preprocessing │ ─▶ │  Random Forest    │ ─▶ │  Threat score  │
- (train/test)    │ scale+one-hot │     │   classifier      │     │   (0.0–1.0)   │
-                 └──────────────┘     └──────────────────┘     └───────┬───────┘
-                                                                        │ score ≥ threshold
-                                          ┌─────────────────────────────┴───────┐
-                                          ▼                                       ▼
-                                  ┌───────────────┐                     ┌──────────────────┐
-                                  │ FirewallManager│  block src IP       │  SIEM (Elastic)  │
-                                  │ iptables/netsh │ ───────────────────▶│  threat events   │
-                                  └───────────────┘                     └──────────────────┘
+ Live NIC ─▶ flow.py ─┐
+ (scapy)   reconstruct │   ┌──────────────┐     ┌─────────────────┐     ┌───────────────┐
+           features    ├──▶│ Preprocessing │ ─▶ │  Random Forest   │ ─▶ │  Threat score  │
+ NSL-KDD flows ────────┘   │ scale+one-hot │     │   classifier     │     │   (0.0–1.0)   │
+ (train / replay)          └──────────────┘     └─────────────────┘     └───────┬───────┘
+                                                                                 │ score ≥ threshold
+                                          ┌──────────────────────────────────────┴───────┐
+                                          ▼                                                ▼
+                                  ┌────────────────┐                          ┌──────────────────┐
+                                  │ FirewallManager │  block src IP            │  SIEM (Elastic)  │
+                                  │ iptables/netsh  │ ─────────────────────────▶│  threat events   │
+                                  └────────────────┘                          └──────────────────┘
 ```
+
+The model accepts flows from **two sources**: NSL-KDD records (for training and
+the offline demo) and **live traffic** reconstructed from packets captured off a
+real interface.
 
 Preprocessing and the classifier are bundled in a single scikit-learn
 `Pipeline`, so the exact transformations used in training are reused at
@@ -93,6 +98,35 @@ To actually enforce blocks and log to Elasticsearch:
 python -m netsentinel.realtime --source replay --enforce --siem
 ```
 
+### Live network capture (real traffic)
+
+The detector can also run against **real traffic sniffed off your network
+interface** — this is the connector that lets the model watch a live network
+instead of a recording:
+
+```bash
+pip install -e .[live]        # installs scapy
+# Run as Administrator / root (raw-socket capture is privileged).
+# Capture 500 packets on the default interface, dry-run (no blocking):
+python -m netsentinel.realtime --source live --count 500
+```
+
+How it works: [`live_capture.py`](src/netsentinel/live_capture.py) sniffs
+packets and converts each to a lightweight record; [`flow.py`](src/netsentinel/flow.py)
+groups them into **connections** and reconstructs the NSL-KDD feature schema the
+model expects; each completed connection is scored and, if it crosses the threat
+threshold, its **real source IP** is blocked.
+
+> **Honest feature coverage.** Header- and timing-derived features (bytes,
+> protocol, service, TCP flags, duration, and the 2-second traffic statistics
+> like connection `count`/`srv_count`/error rates) are computed for real from
+> live packets. NSL-KDD's *content* features (e.g. `num_failed_logins`, `hot`)
+> require deep payload inspection and are out of scope, so they default to 0.
+> The features the model relies on most (see the importance plot) are the ones
+> reconstructed live, so live scoring stays meaningful — but this is an
+> approximation of the original dataset's labeling environment, not a
+> drop-in replacement for it.
+
 ### Docker
 
 ```bash
@@ -108,9 +142,10 @@ docker run --rm netsentinel
 | `model.py` | Preprocessing + Random Forest pipeline |
 | `train.py` | Fit, evaluate, persist model + plots + `metrics.json` |
 | `evaluate.py` | Precision/recall/F1/ROC-AUC, confusion matrix, ROC, feature importances |
-| `realtime.py` | Score flows and drive automated response |
+| `realtime.py` | Score flows (replayed or live) and drive automated response |
+| `flow.py` | Reconstruct NSL-KDD connection features from a packet stream |
+| `live_capture.py` | Sniff a network interface (scapy) and feed the flow tracker |
 | `firewall_manager.py` | Cross-platform IP blocking (dry-run by default) + SIEM logging |
-| `packet_analyzer.py` | Optional live capture via scapy |
 
 ## Testing & CI
 
@@ -132,12 +167,14 @@ GitHub Actions runs lint + tests on every push and pull request.
 
 ## Limitations & roadmap
 
-- The model is trained on NSL-KDD's **flow-level** features. Reconstructing all
-  41 features from live packet capture requires flow aggregation that is out of
-  scope here, so the live demo replays flow records. **Next step:** a flow-feature
-  extractor (e.g. CICFlowMeter-style) to close the gap to true live detection.
+- **Live feature parity.** The live flow extractor reconstructs the header- and
+  timing-based NSL-KDD features but not the payload/content features (which
+  default to 0). Closing that gap would need deep packet inspection or a
+  CICFlowMeter-style extractor paired with a model trained on the same feature
+  set (e.g. CIC-IDS2017).
+- Train on a more modern dataset (CIC-IDS2017) with contemporary attack types,
+  so the live and training feature sets match exactly.
 - Add gradient-boosted trees (XGBoost/LightGBM) as a comparison baseline.
-- Train on a more modern dataset (CIC-IDS2017) with contemporary attack types.
 - Stream events to a Grafana/Kibana dashboard.
 
 ## License

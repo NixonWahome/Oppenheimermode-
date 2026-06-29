@@ -43,6 +43,15 @@ class ThreatDetector:
         """Return attack probabilities for a batch of flow records (DataFrame)."""
         return self.pipeline.predict_proba(flows)[:, 1].tolist()
 
+    def score_row(self, row: dict) -> float:
+        """Return the attack probability for a single flow feature dict."""
+        import pandas as pd
+
+        from .flow import FEATURE_COLUMNS
+
+        frame = pd.DataFrame([{c: row.get(c, 0) for c in FEATURE_COLUMNS}])
+        return float(self.pipeline.predict_proba(frame)[0, 1])
+
 
 def replay(limit: int = 50, dry_run: bool = True, enable_siem: bool = False) -> None:
     """Replay flows from the NSL-KDD test set through the detector + firewall."""
@@ -67,10 +76,43 @@ def replay(limit: int = 50, dry_run: bool = True, enable_siem: bool = False) -> 
     )
 
 
+def live(iface=None, count=0, dry_run=True, enable_siem=False) -> None:
+    """Capture real traffic, reconstruct flows, score them, and respond.
+
+    Requires admin/root and the optional ``scapy`` dependency.
+    """
+    detector = ThreatDetector()
+    firewall = FirewallManager(dry_run=dry_run, enable_siem=enable_siem)
+    from .live_capture import LiveCapture
+
+    stats = {"flows": 0, "threats": 0}
+
+    def on_flow(row: dict) -> None:
+        stats["flows"] += 1
+        score = detector.score_row(row)
+        src_ip = row.get("_src_ip", "unknown")
+        if score >= detector.threshold:
+            stats["threats"] += 1
+            firewall.block_ip(src_ip, reason=f"threat score {score:.2f}")
+        else:
+            logger.debug("benign flow from %s (score %.2f)", src_ip, score)
+
+    capture = LiveCapture(on_flow=on_flow, iface=iface)
+    try:
+        capture.run(count=count)
+    except KeyboardInterrupt:
+        pass
+    logger.info("Scored %d flows, flagged %d as threats", stats["flows"], stats["threats"])
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run the NetSentinel detector.")
-    parser.add_argument("--source", choices=["replay"], default="replay")
+    parser.add_argument("--source", choices=["replay", "live"], default="replay")
     parser.add_argument("--limit", type=int, default=50, help="Flows to replay.")
+    parser.add_argument("--iface", default=None, help="Interface to sniff (live mode).")
+    parser.add_argument(
+        "--count", type=int, default=0, help="Packets to capture before stopping (0=forever)."
+    )
     parser.add_argument(
         "--enforce",
         action="store_true",
@@ -81,6 +123,11 @@ def main() -> None:
 
     if args.source == "replay":
         replay(limit=args.limit, dry_run=not args.enforce, enable_siem=args.siem)
+    elif args.source == "live":
+        live(
+            iface=args.iface, count=args.count,
+            dry_run=not args.enforce, enable_siem=args.siem,
+        )
 
 
 if __name__ == "__main__":
